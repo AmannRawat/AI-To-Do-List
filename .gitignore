@@ -1,0 +1,17 @@
+# Ignore environment variables / secrets
+.env
+secret.json
+
+# Ignore dependency folders
+node_modules/
+venv/
+.venv/
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore build folders and logs
+/dist
+/build
+*.log
