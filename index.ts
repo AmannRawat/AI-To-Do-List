@@ -2,10 +2,13 @@ import { db } from "./src/db/index.js";
 import { todosTable } from "./src/db/schema.js";
 import { ilike, eq } from "drizzle-orm";
 import { GoogleGenAI } from "@google/genai";
+import readlineSync from "readline-sync";
 
+//AI PART
 const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY!,
+    apiKey: process.env.GEMINI_API_KEY!,
 });
+
 
 // Tools
 async function getAllTodos() {
@@ -14,9 +17,15 @@ async function getAllTodos() {
 }
 
 async function createTodo(todo: string) {
-    await db.insert(todosTable).values({
-        todo,
-    })
+
+    const [result] = await db
+        .insert(todosTable)
+        .values({ todo })
+        .returning({ id: todosTable.id });
+
+    if (!result) throw new Error("Failed to create todo");
+
+    return result.id;
 }
 async function deleteTodoById(id: number) {
     await db.delete(todosTable).where(eq(todosTable.id, id));
@@ -27,7 +36,14 @@ async function searchTodo(search: string) {
     return todo;
 }
 
-const System_Prompt=`
+const tools = {
+    getAllTodos: getAllTodos,
+    createTodo: createTodo,
+    deleteTodoById: deleteTodoById,
+    searchTodo: searchTodo
+}
+
+const System_Prompt = `
 You are a To-do List Assistant with START, PLAN, OBSERVATION and OUTPUT State.
 Wait for the user prompt and first PLAN using available tools.
 After Planning, Take Actions with appropriate tools and  wait dor OBSERVATION based the actions.
@@ -44,7 +60,7 @@ updatedAt: Timestamp and default to now
 
 Available commands:
 -getAllTodos: Return all the Todos from database
--createTodo: Create a new Todo. You will be given the task description.
+-createTodo: Create a new Todo. You will be given the task description and returns the ID of the newly created to-do.
 -deleteTodoById: Delete a Todo by its ID. You will be given the ID of the task to delete.
 -searchTodo: Search for all Todos matching the search string using ilike operator. You will be given a search string.
 
@@ -53,6 +69,40 @@ START
 {"type":"user","user":"Add a new task to buy groceries."}
 {"type":"assistant","assistant":"PLAN: I will create a new Todo with the description 'buy groceries'."}
 {"type":"action","action":"createTodo","parameters":{"todo":"buy groceries"}}
-{"type":"observation","observation":"Todo created successfully."}
+{"type":"observation","observation":"Todo created successfully. id=2"}
 {"type":"assistant","assistant":"The task 'buy groceries' has been added to your to-do list."}
 `
+
+const message = [{ role: "system", content: System_Prompt }];
+
+while (true) {
+    const query = readlineSync.question("User: "); //Let progra stop for user input in terminal 
+    const userMessage = { type: "user", content: query };
+    message.push({ role: "user", content: JSON.stringify(userMessage) });
+
+    const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-lite",
+
+
+        contents: message
+            .filter((m) => m.role !== "system")
+            .map((m) => ({
+                role: m.role === "assistant" ? "model" : "user",
+                parts: [{ text: m.content }],
+            })),
+
+        config: {
+            systemInstruction: System_Prompt,
+            responseMimeType: "application/json",
+        },
+    });
+
+    const result = response.text!;
+
+    message.push({
+        role: "assistant",
+        content: result,
+    });
+
+    console.log("AI:", result);
+}
