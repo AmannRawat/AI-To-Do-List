@@ -67,10 +67,13 @@ Available commands:
 EXAMPLE:
 START
 {"type":"user","user":"Add a new task to buy groceries."}
-{"type":"assistant","assistant":"PLAN: I will create a new Todo with the description 'buy groceries'."}
-{"type":"action","action":"createTodo","parameters":{"todo":"buy groceries"}}
-{"type":"observation","observation":"Todo created successfully. id=2"}
-{"type":"assistant","assistant":"The task 'buy groceries' has been added to your to-do list."}
+{"type":"plan","plan": "I will create a new Todo with the description 'buy groceries'."}
+{"type":"output","output":"CAn you tell me what all items you want to buy groceries for?"}
+{"type":"user","user":"I want to buy milk, kurkure, and Diet Coke."}
+{"type":"plan","plan": "I will use createTodo tool to add a new task with the description 'buy groceries'. in DB"}
+{"type":"action","funtion":"createTodo","input": "Shopping list: milk, kurkure, and Diet Coke."}
+{"type":"observation","observation":"id=2"}
+{"type":"output","output":"The task 'buy groceries' has been added to your to-do list."}
 `
 
 const message = [{ role: "system", content: System_Prompt }];
@@ -104,5 +107,11 @@ while (true) {
         content: result,
     });
 
-    console.log("AI:", result);
+    const action=JSON.parse(result);
+
+    if(action.type==="output"){
+        console.log(`AI: ${action.output}`);
+        break;
+    }
+    // console.log("AI:", result);
 }
