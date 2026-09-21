@@ -1,3 +1,21 @@
+const ui = {
+    reset: "\x1b[0m",
+    cyan: "\x1b[36m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    magenta: "\x1b[35m",
+    gray: "\x1b[90m",
+    bold: "\x1b[1m",
+};
+
+console.clear();
+console.log(`${ui.magenta}${ui.bold}
+╔══════════════════════════════════════╗
+║        🤖 AI TO-DO ASSISTANT        ║
+╚══════════════════════════════════════╝
+${ui.reset}`);
+
+
 import "dotenv/config";
 import { GoogleGenAI } from "@google/genai";
 import { db } from "./db/index.js";
@@ -93,8 +111,9 @@ IMPORTANT RULES
 const message = [{ role: "system", content: System_Prompt }];
 
 while (true) {
-    const query = readlineSync.question("User: ");
-
+    const query = readlineSync.question(
+        `${ui.cyan}${ui.bold}👤 You:${ui.reset} `
+    );
     const userMessage = {
         type: "user",
         user: query,
@@ -122,7 +141,8 @@ while (true) {
 
         const result = response.text!;
         // Gemini sometimes returns multiple JSON objects
-        const json = `[${result}]`;
+        console.log("RAW:\n", result);
+        const json = `[${result.trim().replace(/}\s*{/g, "},{")}]`;
         const actions = JSON.parse(json);
 
         message.push({
@@ -130,21 +150,33 @@ while (true) {
             content: result,
         });
 
+        let finished = false;
         for (const action of actions) {
 
             if (action.type === "plan") {
+                console.log(
+                    `${ui.yellow}🧠 Planning:${ui.reset} ${action.plan}`
+                );
+
                 message.push({
                     role: "user",
                     content: JSON.stringify(action),
                 });
+
                 continue;
             }
 
             if (action.type === "output") {
-                console.log(`AI: ${action.output}`);
+                console.log(
+                    `\n${ui.green}${ui.bold}🤖 AI:${ui.reset} ${action.output}\n`
+                );
+                finished = true;
                 break;
             }
             if (action.type === "action") {
+                console.log(
+                    `${ui.gray}⚙️  Executing:${ui.reset} ${action.function}`
+                );
                 let observation;
 
                 switch (action.function) {
@@ -170,6 +202,9 @@ while (true) {
                     }),
                 });
             }
+        }
+        if (finished) {
+            break;
         }
     }
 }
