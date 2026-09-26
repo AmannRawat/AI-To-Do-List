@@ -20,7 +20,7 @@ import "dotenv/config";
 import { GoogleGenAI } from "@google/genai";
 import { db } from "./db/index.js";
 import { todosTable } from "./db/schema.js";
-import { ilike, eq } from "drizzle-orm";
+import { ilike, eq, gte, lt, and } from "drizzle-orm";
 import readlineSync from "readline-sync";
 
 //AI PART
@@ -35,17 +35,27 @@ async function getAllTodos() {
     return todo;
 }
 
-async function createTodo(todo: string) {
-
+async function createTodo(
+    todo: string,
+    priority: "high" | "medium" | "low",
+    dueDate: Date
+) {
     const [result] = await db
         .insert(todosTable)
-        .values({ todo })
-        .returning({ id: todosTable.id });
+        .values({
+            todo,
+            priority,
+            dueDate,
+        })
+        .returning({
+            id: todosTable.id,
+        });
 
     if (!result) throw new Error("Failed to create todo");
 
     return result.id;
 }
+
 async function deleteTodoById(id: number) {
     await db.delete(todosTable).where(eq(todosTable.id, id));
 }
@@ -55,12 +65,43 @@ async function searchTodo(search: string) {
     return todo;
 }
 
-const tools = {
-    getAllTodos: getAllTodos,
-    createTodo: createTodo,
-    deleteTodoById: deleteTodoById,
-    searchTodo: searchTodo
+async function getTodosByDate(date: Date) {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    return await db
+        .select()
+        .from(todosTable)
+        .where(
+            and(
+                gte(todosTable.dueDate, start),
+                lt(todosTable.dueDate, end)
+            )
+        );
 }
+
+async function rescheduleTodo(id: number, newDate: Date) {
+    await db
+        .update(todosTable)
+        .set({
+            dueDate: newDate,
+        })
+        .where(eq(todosTable.id, id));
+
+    return `Todo ${id} rescheduled`;
+}
+
+const tools = {
+    getAllTodos,
+    createTodo,
+    deleteTodoById,
+    searchTodo,
+    getTodosByDate,
+    rescheduleTodo,
+};
 
 const System_Prompt = `
 You are a To-do List Assistant with START, PLAN, OBSERVATION and OUTPUT State.
@@ -75,19 +116,40 @@ Return exactly ONE JSON object per response.
 Do not return multiple JSON objects or markdown.
 
 Todo DB schema:
-id: Int and primary key
-todo: String and not null
-createdAt: Timestamp and default to now
-updatedAt: Timestamp and default to now
+id: Int
+todo: String
+priority: high | medium | low
+dueDate: ISO datetime
+createdAt: Timestamp
+updatedAt: Timestamp
 
 Available commands:
 -getAllTodos: Return all the Todos from database
--createTodo: Create a new Todo. You will be given the task description and returns the ID of the newly created to-do.
+-createTodo: Creates a new todo.
+  Input format:
+  {
+    "todo": "Study DSA",
+    "priority": "high",
+    "dueDate": "2026-09-27T19:00:00"
+  }
 -deleteTodoById: Delete a Todo by its ID. You will be given the ID of the task to delete.
 -searchTodo: Search for all Todos matching the search string using ilike operator. You will be given a search string.
+- getTodosByDate:
+  Returns all todos for a specific date.
+  Input:
+  {
+    "date": "2026-09-27T00:00:00"
+  }
+    - rescheduleTodo:
+  Moves a todo to a new date and time.
+
+  Input:
+  {
+    "id": 8,
+    "newDate": "2026-09-28T19:00:00"
+  }
 
 EXAMPLE
-
 Conversation Flow
 
 User → {"type":"user","user":"Add a new task to buy groceries."}
@@ -106,13 +168,18 @@ IMPORTANT RULES
 - Do not use Markdown or code fences.
 - Valid response types are: plan, action, and output.
 - Observation messages are provided by the system after a tool executes.
+- A maximum of 5 tasks is allowed per day.
+- Before creating a new todo with a dueDate, use getTodosByDate to check that day's schedule.
+- If there are already 5 or more tasks, do NOT call rescheduleTodo immediately.
+- Instead, recommend moving the lowest-priority task to the next available day and ask the user for confirmation.
+- Only call rescheduleTodo after the user explicitly says "yes".
 `
 
 const message = [{ role: "system", content: System_Prompt }];
 
 while (true) {
     const query = readlineSync.question(
-        `${ui.cyan}${ui.bold}👤 You:${ui.reset} `
+        `${ui.cyan}${ui.bold} You:${ui.reset} `
     );
     const userMessage = {
         type: "user",
@@ -141,7 +208,7 @@ while (true) {
 
         const result = response.text!;
         // Gemini sometimes returns multiple JSON objects
-        console.log("RAW:\n", result);
+        // console.log("RAW:\n", result);
         const json = `[${result.trim().replace(/}\s*{/g, "},{")}]`;
         const actions = JSON.parse(json);
 
@@ -184,13 +251,28 @@ while (true) {
                         observation = await getAllTodos();
                         break;
                     case "createTodo":
-                        observation = await createTodo(action.input);
+                        observation = await createTodo(
+                            action.input.todo,
+                            action.input.priority,
+                            new Date(action.input.dueDate)
+                        );
                         break;
                     case "deleteTodoById":
                         observation = await deleteTodoById(action.input);
                         break;
                     case "searchTodo":
                         observation = await searchTodo(action.input);
+                        break;
+                    case "getTodosByDate":
+                        observation = await getTodosByDate(
+                            new Date(action.input.date)
+                        );
+                        break;
+                    case "rescheduleTodo":
+                        observation = await rescheduleTodo(
+                            action.input.id,
+                            new Date(action.input.newDate)
+                        );
                         break;
                 }
 
